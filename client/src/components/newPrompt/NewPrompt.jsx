@@ -16,13 +16,14 @@ const NewPrompt = ({ data }) => {
     aiData: {},
   });
 
+  // Initialize chat with valid history data
   const chat = model.startChat({
-    history: [
-      data?.history.map(({ role, parts }) => ({
-        role,
-        parts: [{ text: parts[0].text }],
-      })),
-    ],
+    history: Array.isArray(data?.history)
+      ? data.history.map(({ role, parts }) => ({
+          role: role || "user", // Default to 'user' role
+          parts: [{ text: parts?.[0]?.text || "" }], // Ensure valid text
+        }))
+      : [],
     generationConfig: {
       // maxOutputTokens: 100,
     },
@@ -31,12 +32,9 @@ const NewPrompt = ({ data }) => {
   const endRef = useRef(null);
   const formRef = useRef(null);
 
-  useEffect(() => {
-    endRef.current.scrollIntoView({ behavior: "smooth" });
-  }, [data, question, answer, img.dbData]);
-
   const queryClient = useQueryClient();
 
+  // Mutation for updating the chat on the server
   const mutation = useMutation({
     mutationFn: () => {
       return fetch(`${import.meta.env.VITE_API_URL}/api/chats/${data._id}`, {
@@ -46,39 +44,47 @@ const NewPrompt = ({ data }) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question: question.length ? question : undefined,
+          question: question || undefined,
           answer,
           img: img.dbData?.filePath || undefined,
         }),
       }).then((res) => res.json());
     },
     onSuccess: () => {
-      queryClient
-        .invalidateQueries({ queryKey: ["chat", data._id] })
-        .then(() => {
-          formRef.current.reset();
-          setQuestion("");
-          setAnswer("");
-          setImg({
-            isLoading: false,
-            error: "",
-            dbData: {},
-            aiData: {},
-          });
+      queryClient.invalidateQueries({ queryKey: ["chat", data._id] }).then(() => {
+        formRef.current.reset();
+        setQuestion("");
+        setAnswer("");
+        setImg({
+          isLoading: false,
+          error: "",
+          dbData: {},
+          aiData: {},
         });
+      });
     },
     onError: (err) => {
-      console.log(err);
+      console.error("Failed to update chat:", err);
+      alert("An error occurred while updating the chat. Please try again.");
     },
   });
 
+  // Function to add a new message
   const add = async (text, isInitial) => {
+    if (!text) {
+      console.warn("Empty text cannot be added to the chat.");
+      return;
+    }
+
     if (!isInitial) setQuestion(text);
 
     try {
-      const result = await chat.sendMessageStream(
-        Object.entries(img.aiData).length ? [img.aiData, text] : [text]
-      );
+      const messages = Object.entries(img.aiData).length
+        ? [img.aiData, text]
+        : [text];
+
+      const result = await chat.sendMessageStream(messages);
+
       let accumulatedText = "";
       for await (const chunk of result.stream) {
         const chunkText = chunk.text();
@@ -89,10 +95,16 @@ const NewPrompt = ({ data }) => {
 
       mutation.mutate();
     } catch (err) {
-      console.log(err);
+      console.error("Error sending message:", err);
     }
   };
 
+  // Scroll to the latest message
+  useEffect(() => {
+    endRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [data, question, answer, img]);
+
+  // Handle the form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -102,22 +114,21 @@ const NewPrompt = ({ data }) => {
     add(text, false);
   };
 
-  // IN PRODUCTION WE DON'T NEED IT
+  // Add the initial message from history
   const hasRun = useRef(false);
-
   useEffect(() => {
     if (!hasRun.current) {
-      if (data?.history?.length === 1) {
+      if (data?.history?.length === 1 && data.history[0]?.parts?.[0]?.text) {
         add(data.history[0].parts[0].text, true);
       }
+      hasRun.current = true;
     }
-    hasRun.current = true;
-  }, []);
+  }, [data]);
 
   return (
     <>
-      {/* ADD NEW CHAT */}
-      {img.isLoading && <div className="">Loading...</div>}
+      {/* Add new chat */}
+      {img.isLoading && <div>Loading...</div>}
       {img.dbData?.filePath && (
         <IKImage
           urlEndpoint={import.meta.env.VITE_IMAGE_KIT_ENDPOINT}
